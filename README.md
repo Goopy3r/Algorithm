@@ -76,4 +76,4 @@ You can tune the maze and animation with these constants:
 Run the script with:
 
 ```bash
-python maze_wilson_dijkstra.py
+python some-algo.py
