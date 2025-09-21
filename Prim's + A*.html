@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maze Generation and Solving Animation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0A0A15;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        .controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 10;
+        }
+        button {
+            background-color: #3A1C71;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #4A2C81;
+        }
+        .slider-container {
+            margin: 10px 5px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        input[type="range"] {
+            width: 150px;
+        }
+        .size-value {
+            display: inline-block;
+            width: 30px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="mazeCanvas"></canvas>
+    <div class="controls">
+        <div id="status">Initializing...</div>
+        <div class="slider-container">
+            <label for="mazeSizeSlider">Maze Size: <span id="sizeValue" class="size-value">30</span></label>
+            <input type="range" id="mazeSizeSlider" min="10" max="50" value="30">
+        </div>
+        <button id="restartBtn">Restart</button>
+        <button id="pauseBtn">Pause</button>
+    </div>
+
+    <script>
+        // Configuration constants
+        const CANVAS_WIDTH = 800;
+        const CANVAS_HEIGHT = 800;
+        let MAZE_SIZE = 30; // Default size, will be updated by slider
+
+        // Color definitions
+        const BG_COLOR = '#0A0A15';
+        const WALL_COLOR = '#FFFFFF';
+        const CURRENT_COLOR = '#FF1493';
+        const GENERATION_PARTICLE = '#00FF7F';
+        const SOLVING_PARTICLE = '#1E90FF';
+        const VISITED_COLOR = '#3A1C71';
+        const PATH_COLOR = '#FF3333';
+        const START_COLOR = '#00FF7F';
+        const END_COLOR = '#FF4500';
+        const PRIM_GENERATION_PARTICLE = '#FF9500';
+        const ASTAR_SOLVING_PARTICLE = '#FF00FF';
+
+        // Animation settings
+        const PARTICLE_LIFETIME = 3;
+        const PARTICLE_SIZE = 0.8;
+        const GEN_DURATION = 3;
+        const SOLVE_DURATION = 4;
+        const TOTAL_DURATION = GEN_DURATION + SOLVE_DURATION;
+        const TARGET_FPS = 30;
+        let GEN_FRAMES = GEN_DURATION * TARGET_FPS;
+        let SOLVE_FRAMES = SOLVE_DURATION * TARGET_FPS;
+        let TOTAL_FRAMES = TOTAL_DURATION * TARGET_FPS;
+        const GLOW_INTENSITY = 1.2;
+        const PULSE_SPEED = 0.15;
+
+        // Global variables
+        let canvas, ctx;
+        let grid = [];
+        let generationStates = [];
+        let solvingStates = [];
+        let frames = [];
+        let particles = [];
+        let currentFrame = 0;
+        let animationId = null;
+        let isPaused = false;
+        let totalCells = 0;
+        let entrancePos, exitPos;
+        let cellSize;
+        let xOffset, yOffset;
+
+        class Particle {
+            constructor(x, y, color, size = PARTICLE_SIZE, lifetime = PARTICLE_LIFETIME, velocity = [0, 0]) {
+                this.x = x;
+                this.y = y;
+                this.originalColor = color;
+                this.color = color;
+                this.size = size * (0.8 + Math.random() * 0.4);
+                this.maxLifetime = lifetime;
+                this.lifetime = lifetime;
+                this.decay = 0.85;
+                this.vx = velocity[0] * (0.5 + Math.random());
+                this.vy = velocity[1] * (0.5 + Math.random());
+            }
+
+            update() {
+                this.lifetime--;
+                this.size *= this.decay;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vx *= 0.9;
+                this.vy *= 0.9;
+
+                const alpha = this.lifetime / this.maxLifetime;
+                const [r, g, b] = this.originalColor;
+                this.color = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+                return this.lifetime > 0 && this.size > 0.1;
+            }
+        }
+
+        class Cell {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.walls = { N: true, E: true, S: true, W: true };
+                this.visited = false;
+                this.inPath = false;
+                this.isStart = false;
+                this.isEnd = false;
+                this.isFrontier = false;
+                this.generationOrder = -1;
+                this.distance = Infinity;
+                this.inCurrentPath = false;
+            }
+        }
+
+        function createMazePrim(width, height) {
+            grid = Array.from({ length: width }, (_, x) => 
+                Array.from({ length: height }, (_, y) => new Cell(x, y))
+            );
+            
+            generationStates = [];
+            let cellsAdded = 0;
+
+            // Start with a random cell
+            const startX = Math.floor(Math.random() * width);
+            const startY = Math.floor(Math.random() * height);
+            grid[startX][startY].visited = true;
+            grid[startX][startY].generationOrder = cellsAdded;
+            cellsAdded++;
+
+            // Add the initial cell to the maze
+            generationStates.push(captureGenerationState(grid, grid[startX][startY], [], [], [[startX, startY]]));
+
+            // Create a list of frontier cells (neighbors of visited cells)
+            const frontier = [];
+            const directions = [['N', 0, -1], ['E', 1, 0], ['S', 0, 1], ['W', -1, 0]];
+            const opposite = { N: 'S', E: 'W', S: 'N', W: 'E' };
+
+            // Add the initial frontier cells
+            for (const [direction, dx, dy] of directions) {
+                const nx = startX + dx;
+                const ny = startY + dy;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height && !grid[nx][ny].visited) {
+                    frontier.push([nx, ny, startX, startY, direction]);
+                    grid[nx][ny].isFrontier = true;
+                }
+            }
+
+            // Capture state with frontier
+            generationStates.push(captureGenerationState(
+                grid, 
+                grid[startX][startY], 
+                [], 
+                [], 
+                frontier.map(([nx, ny]) => [nx, ny])
+            ));
+
+            while (frontier.length > 0) {
+                // Randomly select a frontier cell
+                const idx = Math.floor(Math.random() * frontier.length);
+                const [fx, fy, px, py, dirFromParent] = frontier.splice(idx, 1)[0];
+                
+                // Mark the frontier cell as visited and remove it from frontier
+                grid[fx][fy].visited = true;
+                grid[fx][fy].generationOrder = cellsAdded;
+                cellsAdded++;
+                grid[fx][fy].isFrontier = false;
+                
+                // Remove the wall between the frontier cell and its parent
+                grid[px][py].walls[dirFromParent] = false;
+                grid[fx][fy].walls[opposite[dirFromParent]] = false;
+                
+                // Capture state after connecting the cell
+                generationStates.push(captureGenerationState(
+                    grid, 
+                    grid[fx][fy], 
+                    [], 
+                    [], 
+                    [[fx, fy]], 
+                    frontier.map(([nx, ny]) => [nx, ny])
+                ));
+                
+                // Add new frontier cells
+                for (const [direction, dx, dy] of directions) {
+                    const nx = fx + dx;
+                    const ny = fy + dy;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && 
+                        !grid[nx][ny].visited && !grid[nx][ny].isFrontier) {
+                        frontier.push([nx, ny, fx, fy, direction]);
+                        grid[nx][ny].isFrontier = true;
+                    }
+                }
+                
+                // Capture state with updated frontier
+                generationStates.push(captureGenerationState(
+                    grid, 
+                    grid[fx][fy], 
+                    [], 
+                    [], 
+                    [[fx, fy]], 
+                    frontier.map(([nx, ny]) => [nx, ny])
+                ));
+            }
+
+            // Create entrance and exit
+            const entranceX = Math.floor(Math.random() * (width - 2)) + 1;
+            const exitX = Math.floor(Math.random() * (width - 2)) + 1;
+            grid[entranceX][0].walls.N = false;
+            grid[exitX][height - 1].walls.S = false;
+            grid[entranceX][0].visited = true;
+            grid[exitX][height - 1].visited = true;
+            grid[entranceX][0].isStart = true;
+            grid[exitX][height - 1].isEnd = true;
+            entrancePos = [entranceX, 0];
+            exitPos = [exitX, height - 1];
+
+            // Ensure outer walls are intact except for entrance and exit
+            for (let x = 0; x < width; x++) {
+                for (let y = 0; y < height; y++) {
+                    if (y === 0 && x !== entranceX) grid[x][y].walls.N = true;
+                    if (y === height - 1 && x !== exitX) grid[x][y].walls.S = true;
+                    if (x === 0) grid[x][y].walls.W = true;
+                    if (x === width - 1) grid[x][y].walls.E = true;
+                }
+            }
+
+            generationStates.push(captureGenerationState(grid, null, [], []));
+            return { grid, generationStates, cellsAdded, entrancePos, exitPos };
+        }
+
+        function captureGenerationState(grid, currentCell, path, walls, activeCells = [], frontierCells = [], isWilsonWalk = false) {
+            const wallsData = grid.map(row => row.map(cell => ({ ...cell.walls })));
+            const visitedData = grid.map(row => row.map(cell => cell.visited));
+            const inPathData = grid.map(row => row.map(cell => cell.inPath));
+            const isStartData = grid.map(row => row.map(cell => cell.isStart));
+            const isEndData = grid.map(row => row.map(cell => cell.isEnd));
+            const isFrontierData = grid.map(row => row.map(cell => cell.isFrontier));
+            const generationOrderData = grid.map(row => row.map(cell => cell.generationOrder));
+            const inCurrentPathData = grid.map(row => row.map(cell => cell.inCurrentPath));
+
+            return {
+                walls: wallsData,
+                visited: visitedData,
+                inPath: inPathData,
+                isStart: isStartData,
+                isEnd: isEndData,
+                isFrontier: isFrontierData,
+                generationOrder: generationOrderData,
+                inCurrentPath: inCurrentPathData,
+                current: currentCell ? [currentCell.x, currentCell.y] : null,
+                path: path.map(cell => [cell.x, cell.y]),
+                wallsToCheck: walls,
+                phase: 'generation',
+                activeCells: activeCells,
+                frontierCells: frontierCells,
+                isWilsonWalk: isWilsonWalk
+            };
+        }
+
+        function heuristic(a, b) {
+            return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]);
+        }
+
+        function solveMazeAStar(grid, startPos, endPos) {
+            const width = grid.length;
+            const height = grid[0].length;
+            const [startX, startY] = startPos;
+            const [endX, endY] = endPos;
+
+            // Reset grid for solving
+            for (let x = 0; x < width; x++) {
+                for (let y = 0; y < height; y++) {
+                    grid[x][y].visited = false;
+                    grid[x][y].inPath = false;
+                    grid[x][y].distance = Infinity;
+                }
+            }
+
+            grid[startX][startY].isStart = true;
+            grid[endX][endY].isEnd = true;
+            grid[startX][startY].distance = 0;
+
+            // Priority queue: [fScore, gScore, x, y]
+            const priorityQueue = [[heuristic(startPos, endPos), 0, startX, startY]];
+            const visited = new Set();
+            const cameFrom = {};
+            solvingStates = [];
+            const explorationPath = [grid[startX][startY]];
+
+            const activeCells = [[startX, startY]];
+            solvingStates.push(captureSolvingState(grid, grid[startX][startY], explorationPath, [], false, activeCells));
+
+            let solutionFound = false;
+            let finalPath = [];
+
+            const directions = [['N', 0, -1], ['E', 1, 0], ['S', 0, 1], ['W', -1, 0]];
+
+            // Initialize gScore and fScore arrays
+            const gScore = Array.from({ length: width }, () => Array(height).fill(Infinity));
+            gScore[startX][startY] = 0;
+
+            const fScore = Array.from({ length: width }, () => Array(height).fill(Infinity));
+            fScore[startX][startY] = heuristic(startPos, endPos);
+
+            while (priorityQueue.length > 0 && !solutionFound) {
+                // Get the node with the lowest fScore
+                priorityQueue.sort((a, b) => a[0] - b[0]);
+                const [currentF, currentG, x, y] = priorityQueue.shift();
+                const currentPos = [x, y];
+
+                if (visited.has(currentPos.toString())) continue;
+
+                visited.add(currentPos.toString());
+                grid[x][y].visited = true;
+
+                explorationPath.push(grid[x][y]);
+                if (explorationPath.length > 6) {
+                    explorationPath.shift();
+                }
+
+                if (x === endX && y === endY) {
+                    solutionFound = true;
+                    let tempPos = currentPos;
+                    while (cameFrom[tempPos]) {
+                        finalPath.push(tempPos);
+                        tempPos = cameFrom[tempPos];
+                    }
+                    finalPath.push(startPos);
+                    finalPath.reverse();
+
+                    activeCells.push([endX, endY]);
+                    solvingStates.push(captureSolvingState(grid, grid[endX][endY], explorationPath, [], false, activeCells));
+                    continue;
+                }
+
+                const frontierPositions = [];
+                activeCells.push([x, y]);
+
+                for (const [direction, dx, dy] of directions) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && !visited.has([nx, ny].toString())) {
+                        let canMove = false;
+                        if (direction === 'N' && !grid[x][y].walls.N) canMove = true;
+                        if (direction === 'S' && !grid[x][y].walls.S) canMove = true;
+                        if (direction === 'E' && !grid[x][y].walls.E) canMove = true;
+                        if (direction === 'W' && !grid[x][y].walls.W) canMove = true;
+
+                        if (canMove) {
+                            const tentativeGScore = gScore[x][y] + 1;
+
+                            if (tentativeGScore < gScore[nx][ny]) {
+                                cameFrom[[nx, ny]] = [x, y];
+                                gScore[nx][ny] = tentativeGScore;
+                                fScore[nx][ny] = tentativeGScore + heuristic([nx, ny], endPos);
+                                
+                                priorityQueue.push([fScore[nx][ny], tentativeGScore, nx, ny]);
+                                frontierPositions.push([nx, ny]);
+                            }
+                            activeCells.push([nx, ny]);
+                        }
+                    }
+                }
+
+                if (!solutionFound) {
+                    if (solvingStates.length % 8 === 0) {
+                        solvingStates.push(captureSolvingState(
+                            grid, 
+                            grid[x][y], 
+                            explorationPath, 
+                            frontierPositions, 
+                            false, 
+                            activeCells, 
+                            gScore
+                        ));
+                    }
+                }
+            }
+
+            if (solutionFound) {
+                // Capture path progression
+                const step = Math.max(1, Math.floor(finalPath.length / 8));
+                for (let i = 0; i <= finalPath.length; i += step) {
+                    const partialPath = [];
+                    for (let j = 0; j < Math.min(i, finalPath.length); j++) {
+                        const [px, py] = finalPath[j];
+                        partialPath.push(grid[px][py]);
+                    }
+                    solvingStates.push(captureSolvingState(grid, grid[endX][endY], partialPath, [], true));
+                }
+
+                for (const [px, py] of finalPath) {
+                    grid[px][py].inPath = true;
+                }
+
+                const finalPathCells = finalPath.map(([px, py]) => grid[px][py]);
+                for (let i = 0; i < 2; i++) {
+                    solvingStates.push(captureSolvingState(grid, grid[endX][endY], finalPathCells, [], true));
+                }
+            }
+
+            return solvingStates;
+        }
+
+        function captureSolvingState(grid, currentCell, path, frontierPositions, isSolutionPhase = false, activeCells = null, distanceGrid = null) {
+            const wallsData = grid.map(row => row.map(cell => ({ ...cell.walls })));
+            const visitedData = grid.map(row => row.map(cell => cell.visited));
+            const inPathData = grid.map(row => row.map(cell => cell.inPath || path.includes(cell)));
+            const isStartData = grid.map(row => row.map(cell => cell.isStart));
+            const isEndData = grid.map(row => row.map(cell => cell.isEnd));
+            const generationOrderData = grid.map(row => row.map(cell => cell.generationOrder));
+
+            return {
+                walls: wallsData,
+                visited: visitedData,
+                inPath: inPathData,
+                isStart: isStartData,
+                isEnd: isEndData,
+                generationOrder: generationOrderData,
+                current: currentCell ? [currentCell.x, currentCell.y] : null,
+                path: path.map(cell => [cell.x, cell.y]),
+                frontierPositions: frontierPositions,
+                phase: 'solving',
+                isSolutionPhase: isSolutionPhase,
+                activeCells: activeCells || []
+            };
+        }
+
+        function createAnimationFrames(generationStates, solvingStates) {
+            const frames = [];
+            
+            // Sample generation states
+            const genTotalStates = generationStates.length;
+            const genStep = Math.max(1, Math.floor(genTotalStates / GEN_FRAMES));
+            for (let frameIdx = 0; frameIdx < genTotalStates; frameIdx += genStep) {
+                frames.push(generationStates[frameIdx]);
+            }
+            
+            // Fill any remaining frames with the last state
+            while (frames.length < GEN_FRAMES) {
+                frames.push(generationStates[generationStates.length - 1]);
+            }
+            
+            // Sample solving states
+            const solveTotalStates = solvingStates.length;
+            const solveStep = Math.max(1, Math.floor(solveTotalStates / SOLVE_FRAMES));
+            for (let frameIdx = 0; frameIdx < solveTotalStates; frameIdx += solveStep) {
+                frames.push(solvingStates[frameIdx]);
+            }
+            
+            // Fill any remaining frames with the last state
+            while (frames.length < GEN_FRAMES + SOLVE_FRAMES) {
+                frames.push(solvingStates[solvingStates.length - 1]);
+            }
+            
+            return frames;
+        }
+
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? [
+                parseInt(result[1], 16),
+                parseInt(result[2], 16),
+                parseInt(result[3], 16)
+            ] : [0, 0, 0];
+        }
+
+        function hsvToRgb(h, s, v) {
+            let r, g, b;
+            const i = Math.floor(h * 6);
+            const f = h * 6 - i;
+            const p = v * (1 - s);
+            const q = v * (1 - f * s);
+            const t = v * (1 - (1 - f) * s);
+            
+            switch (i % 6) {
+                case 0: r = v; g = t; b = p; break;
+                case 1: r = q; g = v; b = p; break;
+                case 2: r = p; g = v; b = t; break;
+                case 3: r = p; g = q; b = v; break;
+                case 4: r = t; g = p; b = v; break;
+                case 5: r = v; g = p; b = q; break;
+            }
+            
+            return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+        }
+
+        function createGradientColor(order, total) {
+            if (order < 0) return [25, 25, 51];
+            const normPos = Math.min(1.0, order / total);
+            const h1 = 0.11, s1 = 0.9, v1 = 0.8;
+            const h2 = 0.65, s2 = 0.85, v2 = 0.9;
+            const h = h1 + (h2 - h1) * normPos;
+            const s = s1 + (s2 - s1) * normPos;
+            const v = v1 + (v2 - v1) * normPos;
+            return hsvToRgb(h, s, v);
+        }
+
+        function getRandomDirection() {
+            const angle = Math.random() * Math.PI * 2;
+            return [Math.cos(angle) * 0.02, Math.sin(angle) * 0.02];
+        }
+
+        function drawAnimation() {
+            if (isPaused || currentFrame >= frames.length) return;
+            
+            const frame = frames[currentFrame];
+            ctx.fillStyle = BG_COLOR;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Calculate cell size and offsets
+            cellSize = Math.min(CANVAS_HEIGHT / MAZE_SIZE, CANVAS_WIDTH / MAZE_SIZE) * 0.85;
+            xOffset = (CANVAS_WIDTH - MAZE_SIZE * cellSize) / 2;
+            yOffset = (CANVAS_HEIGHT - MAZE_SIZE * cellSize) / 2;
+            
+            const wallsData = frame.walls;
+            const visitedData = frame.visited;
+            const inPathData = frame.inPath;
+            const isStartData = frame.isStart;
+            const isEndData = frame.isEnd;
+            const generationOrderData = frame.generationOrder;
+            const currentPos = frame.current;
+            const pathPositions = frame.path;
+            const phase = frame.phase;
+            
+            const pulseFactor = 1.0 + 0.1 * Math.sin(currentFrame * PULSE_SPEED);
+            const activeCells = frame.activeCells || [];
+            
+            // Update status text
+            const statusEl = document.getElementById('status');
+            if (phase === 'generation') {
+                const progressPercent = Math.min(100, Math.floor((currentFrame / Math.max(1, GEN_FRAMES - 1)) * 100));
+                statusEl.innerHTML = `Maze Generation<br>Algorithm: Prim's Algorithm<br>Progress: ${progressPercent}%`;
+            } else {
+                const isSolutionPhase = frame.isSolutionPhase || false;
+                const titleText = isSolutionPhase ? "Solution Path" : "Exploring Maze";
+                const progressPercent = Math.min(100, Math.floor(((currentFrame - GEN_FRAMES) / Math.max(1, SOLVE_FRAMES - 1)) * 100));
+                statusEl.innerHTML = `${titleText}<br>Algorithm: A* Algorithm<br>Progress: ${progressPercent}%`;
+            }
+            
+            // Draw cells
+            for (let x = 0; x < MAZE_SIZE; x++) {
+                for (let y = 0; y < MAZE_SIZE; y++) {
+                    const cellX = xOffset + x * cellSize;
+                    const cellY = yOffset + (MAZE_SIZE - 1 - y) * cellSize;
+                    
+                    const isCurrent = currentPos && x === currentPos[0] && y === currentPos[1];
+                    const inPath = inPathData[x][y];
+                    const visited = visitedData[x][y];
+                    const isStart = isStartData[x][y];
+                    const isEnd = isEndData[x][y];
+                    const generationOrder = generationOrderData[x][y];
+                    
+                    let glow = false;
+                    let glowSizeFactor = 1.0;
+                    let cellColor = 'white';
+                    let alpha = 0.05;
+                    
+                    if (isStart) {
+                        cellColor = START_COLOR;
+                        alpha = 1.0;
+                        glow = true;
+                        glowSizeFactor = 1.2 * pulseFactor;
+                    } else if (isEnd) {
+                        cellColor = END_COLOR;
+                        alpha = 1.0;
+                        glow = true;
+                        glowSizeFactor = 1.2 * pulseFactor;
+                    } else if (isCurrent) {
+                        cellColor = phase === 'generation' ? PRIM_GENERATION_PARTICLE : ASTAR_SOLVING_PARTICLE;
+                        alpha = 0.9;
+                        glow = true;
+                        glowSizeFactor = 1.15 * pulseFactor;
+                    } else if (inPath) {
+                        cellColor = PATH_COLOR;
+                        const isFinalSolutionFrame = phase !== 'generation' && currentFrame >= GEN_FRAMES + SOLVE_FRAMES - 30;
+                        alpha = isFinalSolutionFrame ? 1.0 : 0.8;
+                        glow = true;
+                        glowSizeFactor = (isFinalSolutionFrame ? 1.1 : 1.05) * pulseFactor;
+                    } else if (visited) {
+                        alpha = 0.7;
+                        if (phase === 'generation') {
+                            const [r, g, b] = createGradientColor(generationOrder, totalCells);
+                            cellColor = `rgb(${r}, ${g}, ${b})`;
+                        } else {
+                            cellColor = VISITED_COLOR;
+                        }
+                    }
+                    
+                    // Draw cell
+                    ctx.fillStyle = cellColor;
+                    ctx.globalAlpha = alpha;
+                    ctx.fillRect(cellX, cellY, cellSize, cellSize);
+                    ctx.globalAlpha = 1.0;
+                    
+                    // Draw glow
+                    if (glow) {
+                        const glowSize = cellSize * glowSizeFactor;
+                        const glowOffset = (cellSize - glowSize) / 2;
+                        ctx.strokeStyle = cellColor;
+                        ctx.globalAlpha = 0.4;
+                        ctx.lineWidth = 1.5;
+                        ctx.strokeRect(cellX + glowOffset, cellY + glowOffset, glowSize, glowSize);
+                        ctx.globalAlpha = 1.0;
+                    }
+                }
+            }
+            
+            // Draw walls
+            ctx.strokeStyle = WALL_COLOR;
+            ctx.lineWidth = 1.0;
+            ctx.globalAlpha = 0.7;
+            
+            for (let x = 0; x < MAZE_SIZE; x++) {
+                for (let y = 0; y < MAZE_SIZE; y++) {
+                    const cellX = xOffset + x * cellSize;
+                    const cellY = yOffset + (MAZE_SIZE - 1 - y) * cellSize;
+                    const walls = wallsData[x][y];
+                    
+                    if (walls.N) {
+                        ctx.beginPath();
+                        ctx.moveTo(cellX, cellY + cellSize);
+                        ctx.lineTo(cellX + cellSize, cellY + cellSize);
+                        ctx.stroke();
+                    }
+                    if (walls.E) {
+                        ctx.beginPath();
+                        ctx.moveTo(cellX + cellSize, cellY);
+                        ctx.lineTo(cellX + cellSize, cellY + cellSize);
+                        ctx.stroke();
+                    }
+                    if (walls.S) {
+                        ctx.beginPath();
+                        ctx.moveTo(cellX, cellY);
+                        ctx.lineTo(cellX + cellSize, cellY);
+                        ctx.stroke();
+                    }
+                    if (walls.W) {
+                        ctx.beginPath();
+                        ctx.moveTo(cellX, cellY);
+                        ctx.lineTo(cellX, cellY + cellSize);
+                        ctx.stroke();
+                    }
+                }
+            }
+            ctx.globalAlpha = 1.0;
+            
+            // Update and draw particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                if (particle.update()) {
+                    ctx.fillStyle = particle.color;
+                    ctx.beginPath();
+                    ctx.arc(particle.x, particle.y, particle.size * cellSize * 0.07, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    particles.splice(i, 1);
+                }
+            }
+            
+            // Add new particles
+            if (phase === 'generation' && activeCells.length > 0 && Math.random() < 0.15) {
+                for (const [ax, ay] of activeCells) {
+                    const cellCenterX = xOffset + ax * cellSize + cellSize / 2;
+                    const cellCenterY = yOffset + (MAZE_SIZE - 1 - ay) * cellSize + cellSize / 2;
+                    const particleColor = hexToRgb(PRIM_GENERATION_PARTICLE);
+                    
+                    for (let i = 0; i < 2; i++) {
+                        const [velX, velY] = getRandomDirection();
+                        particles.push(new Particle(
+                            cellCenterX + (Math.random() - 0.5) * 0.6 * cellSize,
+                            cellCenterY + (Math.random() - 0.5) * 0.6 * cellSize,
+                            particleColor,
+                            Math.random() * 0.7 + 1.0,
+                            Math.floor(Math.random() * 3) + 3,
+                            [velX, velY]
+                        ));
+                    }
+                }
+            } else if (phase !== 'generation' && activeCells.length > 0 && Math.random() < 0.15) {
+                for (const [ax, ay] of activeCells) {
+                    const cellCenterX = xOffset + ax * cellSize + cellSize / 2;
+                    const cellCenterY = yOffset + (MAZE_SIZE - 1 - ay) * cellSize + cellSize / 2;
+                    const particleColor = hexToRgb(ASTAR_SOLVING_PARTICLE);
+                    
+                    for (let i = 0; i < 2; i++) {
+                        const [velX, velY] = getRandomDirection();
+                        particles.push(new Particle(
+                            cellCenterX + (Math.random() - 0.5) * 0.6 * cellSize,
+                            cellCenterY + (Math.random() - 0.5) * 0.6 * cellSize,
+                            particleColor,
+                            Math.random() * 0.7 + 1.0,
+                            Math.floor(Math.random() * 3) + 3,
+                            [velX, velY]
+                        ));
+                    }
+                }
+            }
+            
+            currentFrame++;
+            if (currentFrame < frames.length) {
+                animationId = requestAnimationFrame(drawAnimation);
+            } else {
+                console.log("Animation complete!");
+            }
+        }
+
+        function init() {
+            canvas = document.getElementById('mazeCanvas');
+            ctx = canvas.getContext('2d');
+            canvas.width = CANVAS_WIDTH;
+            canvas.height = CANVAS_HEIGHT;
+            
+            // Set up event listeners
+            document.getElementById('restartBtn').addEventListener('click', restartAnimation);
+            document.getElementById('pauseBtn').addEventListener('click', togglePause);
+            
+            // Set up maze size slider
+            const sizeSlider = document.getElementById('mazeSizeSlider');
+            const sizeValue = document.getElementById('sizeValue');
+            
+            sizeSlider.addEventListener('input', function() {
+                MAZE_SIZE = parseInt(this.value);
+                sizeValue.textContent = MAZE_SIZE;
+            });
+            
+            sizeSlider.addEventListener('change', restartAnimation);
+            
+            // Start the animation
+            restartAnimation();
+        }
+
+        function restartAnimation() {
+            // Cancel any existing animation
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            
+            // Reset state
+            currentFrame = 0;
+            particles = [];
+            isPaused = false;
+            
+            // Update frame counts based on maze size
+            GEN_FRAMES = GEN_DURATION * TARGET_FPS;
+            SOLVE_FRAMES = SOLVE_DURATION * TARGET_FPS;
+            TOTAL_FRAMES = TOTAL_DURATION * TARGET_FPS;
+            
+            // Generate new maze
+            console.log("Generating maze...");
+            const { grid: newGrid, generationStates: newGenStates, cellsAdded, entrancePos: newEntrancePos, exitPos: newExitPos } = createMazePrim(MAZE_SIZE, MAZE_SIZE);
+            grid = newGrid;
+            generationStates = newGenStates;
+            totalCells = cellsAdded;
+            entrancePos = newEntrancePos;
+            exitPos = newExitPos;
+            
+            console.log("Solving maze...");
+            solvingStates = solveMazeAStar(grid, entrancePos, exitPos);
+            
+            console.log("Creating animation frames...");
+            frames = createAnimationFrames(generationStates, solvingStates);
+            
+            console.log("Starting animation...");
+            animationId = requestAnimationFrame(drawAnimation);
+        }
+
+        function togglePause() {
+            isPaused = !isPaused;
+            document.getElementById('pauseBtn').textContent = isPaused ? 'Resume' : 'Pause';
+            
+            if (!isPaused && currentFrame < frames.length) {
+                animationId = requestAnimationFrame(drawAnimation);
+            }
+        }
+
+        // Start everything when the page loads
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
