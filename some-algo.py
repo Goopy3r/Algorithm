@@ -7,6 +7,8 @@ from collections import deque
 import colorsys
 import heapq
 import time
+import signal
+import sys
 
 np.random.seed(42)
 
@@ -39,7 +41,7 @@ PARTICLE_SIZE = 0.8    # Reduced for performance
 GEN_DURATION = 3       # Reduced for faster generation
 SOLVE_DURATION = 4     # Reduced for faster solving
 TOTAL_DURATION = GEN_DURATION + SOLVE_DURATION
-TARGET_FPS = 60        # Target 60 FPS
+TARGET_FPS = 30        # Reduced from 60 to 30 for better performance
 GEN_FRAMES = GEN_DURATION * TARGET_FPS
 SOLVE_FRAMES = SOLVE_DURATION * TARGET_FPS
 TOTAL_FRAMES = TOTAL_DURATION * TARGET_FPS
@@ -151,8 +153,8 @@ def create_maze_wilsons(width, height):
             if not moved:
                 break
 
-            # Capture fewer states for 60 FPS
-            if len(walk) % 6 == 0:
+            # Capture fewer states for better performance
+            if len(walk) % 8 == 0:
                 generation_states.append(capture_generation_state(
                     grid, grid[current_x][current_y], [], [], current_path_cells, is_wilson_walk=True))
 
@@ -179,8 +181,8 @@ def create_maze_wilsons(width, height):
                             unvisited.remove((x1, y1))
 
                 active_cells = [(x1, y1), (x2, y2)]
-                # Capture fewer states for 60 FPS
-                if i % 5 == 0:
+                # Capture fewer states for better performance
+                if i % 6 == 0:
                     generation_states.append(capture_generation_state(grid, grid[x2][y2], [], [], active_cells))
 
         for x in range(width):
@@ -295,8 +297,8 @@ def solve_maze_dijkstra(grid, start_pos, end_pos):
         current_distance = distance_grid[x][y]
 
         exploration_path.append(grid[x][y])
-        if len(exploration_path) > 8:  # Reduced for 60 FPS
-            exploration_path = exploration_path[-8:]
+        if len(exploration_path) > 6:  # Reduced for performance
+            exploration_path = exploration_path[-6:]
 
         if current_pos == end_pos:
             solution_found = True
@@ -335,15 +337,15 @@ def solve_maze_dijkstra(grid, start_pos, end_pos):
                     active_cells.append((nx, ny))
 
         if not solution_found:
-            # Capture fewer states for 60 FPS
-            if len(solving_states) % 6 == 0:
+            # Capture fewer states for better performance
+            if len(solving_states) % 8 == 0:
                 solving_states.append(capture_solving_state(grid, grid[x][y],
                                     exploration_path, frontier_positions, False, active_cells,
                                     distance_grid=distance_grid))
 
     if solution_found:
         # Capture path progression with fewer states
-        step = max(1, len(final_path) // 10)
+        step = max(1, len(final_path) // 8)
         for i in range(0, len(final_path) + 1, step):
             partial_path = []
             for j in range(min(i, len(final_path))):
@@ -357,7 +359,7 @@ def solve_maze_dijkstra(grid, start_pos, end_pos):
             grid[px][py].in_path = True
 
         final_path_cells = [grid[p[0]][p[1]] for p in final_path]
-        for _ in range(2):  # Reduced for 60 FPS
+        for _ in range(2):  # Reduced for performance
             solving_states.append(capture_solving_state(grid, grid[end_x][end_y],
                                 final_path_cells, [], True))
 
@@ -389,7 +391,7 @@ def capture_solving_state(grid, current_cell, path, frontier_positions, is_solut
 def create_animation_frames(generation_states, solving_states):
     frames = []
     
-    # Sample generation states for 60 FPS
+    # Sample generation states for better performance
     gen_total_states = len(generation_states)
     step = max(1, gen_total_states // GEN_FRAMES)
     for frame_idx in range(0, gen_total_states, step):
@@ -400,7 +402,7 @@ def create_animation_frames(generation_states, solving_states):
     while len(frames) < GEN_FRAMES:
         frames.append(generation_states[-1])
     
-    # Sample solving states for 60 FPS
+    # Sample solving states for better performance
     solve_total_states = len(solving_states)
     step = max(1, solve_total_states // SOLVE_FRAMES)
     for frame_idx in range(0, solve_total_states, step):
@@ -500,10 +502,10 @@ def create_animation(frames, width, height, total_cells, algorithm_name, solving
         pulse_factor = 1.0 + 0.1 * np.sin(i * PULSE_SPEED)
         active_cells = frame.get('active_cells', [])
 
-        # Drastically reduced particle effects for 60 FPS
+        # Drastically reduced particle effects for better performance
         if generation_phase and is_wilson_walk and in_current_path_data:
             path_cells = [(x, y) for x in range(width) for y in range(height) if in_current_path_data[x][y]]
-            if path_cells and random.random() < 0.3:  # Reduced particle frequency
+            if path_cells and random.random() < 0.2:  # Reduced particle frequency
                 cell_idx = len(path_cells) - 1
                 ax, ay = path_cells[cell_idx]
                 cell_center_x, cell_center_y = cell_positions[(ax, ay)]
@@ -517,7 +519,7 @@ def create_animation(frames, width, height, total_cells, algorithm_name, solving
                 r, g, b = colorsys.hsv_to_rgb(h, s, v)
                 cell_color = (r, g, b)
 
-                if random.random() < 0.1:  # Very reduced particle frequency
+                if random.random() < 0.05:  # Very reduced particle frequency
                     particles.append(Particle(
                         cell_center_x + random.uniform(-0.2, 0.2) * cell_size,
                         cell_center_y + random.uniform(-0.2, 0.2) * cell_size,
@@ -528,7 +530,7 @@ def create_animation(frames, width, height, total_cells, algorithm_name, solving
 
         if generation_phase and not is_wilson_walk:
             for ax, ay in active_cells:
-                if random.random() < 0.2:  # Reduced particle frequency
+                if random.random() < 0.15:  # Reduced particle frequency
                     cell_center_x, cell_center_y = cell_positions[(ax, ay)]
                     cell_center_x += cell_size / 2
                     cell_center_y += cell_size / 2
@@ -547,7 +549,7 @@ def create_animation(frames, width, height, total_cells, algorithm_name, solving
 
         if not generation_phase:
             for ax, ay in active_cells:
-                if random.random() < 0.2:  # Reduced particle frequency
+                if random.random() < 0.15:  # Reduced particle frequency
                     cell_center_x, cell_center_y = cell_positions[(ax, ay)]
                     cell_center_x += cell_size / 2
                     cell_center_y += cell_size / 2
@@ -737,10 +739,13 @@ def create_animation(frames, width, height, total_cells, algorithm_name, solving
                               [cell_y, cell_y + cell_size],
                               wall_color, linewidth=line_width, alpha=alpha_wall, zorder=zorder_wall)
 
+    # Reduce the number of frames for better performance
+    display_frames = min(TOTAL_FRAMES, len(frames))
+    
     ani = animation.FuncAnimation(
         fig,
         update,
-        frames=min(TOTAL_FRAMES, len(frames)),
+        frames=display_frames,
         blit=False,
         interval=1000 / TARGET_FPS,
         repeat=False
@@ -749,7 +754,15 @@ def create_animation(frames, width, height, total_cells, algorithm_name, solving
     return ani, fig
 
 
+# Signal handler to properly close the animation
+def signal_handler(sig, frame):
+    plt.close('all')
+    sys.exit(0)
+
+
 def main():
+    signal.signal(signal.SIGINT, signal_handler)
+    
     combo = {
         "generation_algo": "create_maze_wilsons",
         "solving_algo": "solve_maze_dijkstra",
@@ -793,7 +806,12 @@ def main():
     # Show the animation instead of saving it
     print("🖥️  Displaying animation...")
     plt.tight_layout()
-    plt.show()
+    
+    try:
+        plt.show()
+    except KeyboardInterrupt:
+        print("Animation interrupted by user")
+        plt.close('all')
 
     print("🚀 Animation complete!")
 
