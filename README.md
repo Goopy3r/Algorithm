@@ -5,16 +5,6 @@ It includes smooth **matplotlib animations** with particle effects, glowing high
 
 ---
 
-## Features
-- **Maze Generation**: Uses **Wilson’s Algorithm** with random walks.
-- **Maze Solving**: Uses **Dijkstra’s Algorithm** for shortest path.
-- **Particle Effects**: Lightweight, optimized for **60 FPS**.
-- **Glow & Pulse Effects**: Start, End, Current, Path, and Frontier cells are highlighted.
-- **Progress Tracking**: Displays percentage completion during generation & solving.
-- **Customizable Parameters**: Maze size, colors, particle behavior, and animation speed.
-
----
-
 ## Configuration
 You can tune the maze and animation with these constants:
 
@@ -31,21 +21,6 @@ You can tune the maze and animation with these constants:
 | `START_COLOR` | Start cell glow color | `'#00FF7F'` |
 | `END_COLOR` | End cell glow color | `'#FF4500'` |
 | `PATH_COLOR` | Final path color | `'#FF3333'` |
-
----
-
-## Algorithms
-### 🔹 Wilson’s Maze Generation
-- Picks a random unvisited cell.
-- Performs a **random walk** until reaching the visited tree.
-- Loops are erased.
-- Adds the walk to the maze, ensuring a **uniform spanning tree**.
-
-### 🔹 Dijkstra’s Maze Solving
-- Computes shortest path distances from start.
-- Explores cells in order of increasing distance.
-- Stops once the end cell is reached.
-- Final path is reconstructed and highlighted.
 
 ---
 
@@ -69,11 +44,3 @@ You can tune the maze and animation with these constants:
 - Generation: **3s**
 - Solving: **4s**
 - Smooth 60 FPS animation with glowing path.
-
----
-
-## Usage
-Run the script with:
-
-```bash
-python some-algo.py
