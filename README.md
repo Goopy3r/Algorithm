@@ -1,8 +1,4 @@
-# Maze Generator & Solver (Wilson’s Algorithm + Dijkstra)
-
-This project generates and solves a maze using **Wilson’s algorithm** for generation and **Dijkstra’s algorithm** for solving.  
-It includes smooth **matplotlib animations** with particle effects, glowing highlights, and progress indicators.
-
+# Maze Generator & Solver
 ---
 
 ## Configuration
